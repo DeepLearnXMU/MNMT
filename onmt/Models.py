@@ -358,49 +358,10 @@ class RNNDecoderBase(nn.Module):
         src_len = memory_bank.size(0)
 
         memory_bank = memory_bank.transpose(0, 1).contiguous()  # [batch, src_len, hidden]
-        # memory_bank = self.dropout_hidden(memory_bank)
 
         if context_img is not None and self.bi_attention:
-            # img_feat_num = context_img.size(1)
-            # #进行bi-dimension attention
-            # transposed_memory_bank =  memory_bank             #[batch, src_len, hidden_size]
-            # expanded_memory_bank = transposed_memory_bank.view(tgt_batch, src_len, 1, self.hidden_size)\
-            #                                             .expand(tgt_batch, src_len, img_feat_num, self.hidden_size)
-            # expanded_context_img = context_img.contiguous().view(tgt_batch, 1, img_feat_num, self.hidden_size)\
-            #                                     .expand(tgt_batch, src_len, img_feat_num, self.hidden_size)
-            #
-            # product_matrix = torch.mul(expanded_memory_bank, expanded_context_img)
-            # alignment = self.Linear_bi_dim_attn((product_matrix)\
-            #                         .view(tgt_batch*src_len*img_feat_num, self.hidden_size)\
-            #                     ).view(tgt_batch, src_len, img_feat_num)
-            #
-            # align_score_memory = self.sm(alignment.view(tgt_batch *src_len,img_feat_num ))\
-            #                         .view(tgt_batch ,src_len ,img_feat_num)
-            # align_score_img = self.sm(alignment.transpose(1,2).contiguous().view(tgt_batch * img_feat_num,src_len))\
-            #                         .view(tgt_batch, img_feat_num, src_len)
-            #
-            # co_memory_bank = torch.bmm(align_score_memory, context_img)          #[batch, src_len,  hidden_size]
-            # co_context_img = torch.bmm(align_score_img, transposed_memory_bank)   #[batch, img_feat_num, hidden_size]
-            #
-            # gate_co_memory_bank = \
-            #                 self.sigmoid(self.gate_bi_dim_attn_memory(transposed_memory_bank.contiguous().view(tgt_batch*src_len, self.hidden_size))\
-            #                             .view(-1,src_len))\
-            #                             .view(tgt_batch, src_len, 1)\
-            #                             .expand(tgt_batch, src_len, self.hidden_size)
-            #
-            # gate_co_context_img = self.sigmoid(self.gate_context_img(context_img.contiguous().view(tgt_batch*img_feat_num, self.hidden_size))\
-            #                                     .view(-1,img_feat_num))\
-            #                             .view(tgt_batch, img_feat_num, 1)\
-            #                             .expand(tgt_batch,  img_feat_num, self.hidden_size)
-            #
-            # memory_bank = (transposed_memory_bank + torch.tanh(torch.mul(co_memory_bank, gate_co_memory_bank)))
-            # memory_bank = self.dropout_hidden(memory_bank)
-            # context_img = (context_img + torch.tanh(torch.mul(co_context_img,gate_co_context_img)))
-            # context_img = self.dropout_hidden(context_img)
-
-
+           
             ###############进行bi-dimension attention############
-            #memory_bank = self.dropout_hidden(memory_bank)
             img_feat_num = context_img.size(1)
             # 文本guiding图片  返回[src_len, batch, dim]
             img_text_alignment= self.bi_attn_text_guiding_img( context_img.contiguous(),memory_bank,memory_lengths)       #[batch, img_feat_num, src_len]  还没有softmax完的
@@ -432,24 +393,7 @@ class RNNDecoderBase(nn.Module):
             memory_bank=self.dropout_hidden(memory_bank)
             context_img=self.dropout_hidden(context_img)
 
-            ###################################################
-
-            #####      最简单做法    ##################
-            # img_feat_num = context_img.size(1)
-            # memory_bank_transposed = memory_bank
-            # alignment = torch.bmm(memory_bank_transposed,context_img.transpose(1,2))  #[batch, src_len, img_feat_len]
-            # align_score_memory = self.sm(alignment.view(tgt_batch *src_len,-1 ))\
-            #                         .view(tgt_batch ,src_len ,img_feat_num)
-            # align_score_img = self.sm(alignment.transpose(1,2).contiguous().view(tgt_batch * img_feat_num,-1))\
-            #                         .view(tgt_batch, img_feat_num, src_len)
-            #
-            # co_memory_bank = torch.bmm(align_score_memory, context_img)           #[batch, src_len, hidden_size]
-            # co_context_img = torch.bmm(align_score_img, memory_bank_transposed)   #[batch, img_feat_num, hidden_size]
-            #
-            # memory_bank = memory_bank+co_memory_bank
-            # context_img = context_img+co_context_img
-            ############################################
-
+            
         # Run the forward pass of the RNN.
         decoder_final, decoder_outputs, attns = self._run_forward_pass(
             tgt, memory_bank, state, memory_lengths=memory_lengths, context_img=context_img)
@@ -638,8 +582,6 @@ class InputFeedRNNDecoder(RNNDecoderBase):
                 rnn_output,
                 memory_bank,
                 memory_lengths=memory_lengths)
-            # print(p_attn)
-            # raise AssertionError
             
             attn_output_img=None
             if self.co_attention == 0:
@@ -648,15 +590,11 @@ class InputFeedRNNDecoder(RNNDecoderBase):
                     context_img,
                     memory_lengths=None  # 不进行mask
                 )
-                # attn_output_0=self.dropout_hidden(torch.tanh(attn_output_0))
 
                 gate_beta = self.sigmoid(self.Linear_gate_beta(rnn_output))
                 attn_output_img = torch.mul(attn_output_img, gate_beta)
 
-                #attn_output_0=self.dropout_hidden(attn_output_0)
-                #attn_output_img=self.dropout_hidden(attn_output_img)
                 rec2_input = attn_output_0 + attn_output_img
-                # rec2_input = torch.cat((attn_output_0,attn_output_img),1)
                 decoder_output, hidden = self.rec2(rec2_input, hidden)
 
                 if self.context_gate is not None:
@@ -667,17 +605,6 @@ class InputFeedRNNDecoder(RNNDecoderBase):
 
                 if context_img is not None:
 
-                    # attn_output_0 = torch.tanh(attn_output_0)
-                    # attn_output_0=self.dropout(attn_output_0)
-                    # print('@@@Models multi-modal ')
-                    # #用Annotation经过attention加权求和后的向量 、decoder的隐层作为guiding
-
-                    # attn_output_img, attn_img = self.attn_img(
-                    #     rnn_output,
-                    #     context_img,
-                    #     memory_lengths=None    #不进行mask
-                    #     ,query_modal=attn_output_0
-                    #     )
                     attn_output_img, attn_img = self.attn_img(
                         self.context_gate1(decoder_input,rnn_output,attn_output_0),
                         context_img,
@@ -695,17 +622,10 @@ class InputFeedRNNDecoder(RNNDecoderBase):
                         memory_bank,
                         memory_lengths=memory_lengths,
                         coverage=coverage)
-                    # attn_output_1, attn = self.attn(
-                    #     self.context_gate2(rnn_output,attn_output_0,attn_output_img),
-                    #     memory_bank,
-                    #     memory_lengths=memory_lengths,
-                    #     coverage=coverage)
 
 
                 if attn_output_img is not None:
                     # #利用context 来更新decoder的隐层
-                    # decoder_output,hidden = self.rec2(torch.cat((attn_output,attn_output_img),1),hidden)
-                    # rec2_input=attn_output_0 + attn_output_img + attn_output_1 + attn_output_img_2 + attn_output_2
                     rec2_input=attn_output_0  + attn_output_img + attn_output_1
                     decoder_output,hidden = self.rec2(rec2_input,hidden)
 
@@ -713,15 +633,6 @@ class InputFeedRNNDecoder(RNNDecoderBase):
                     decoder_output,hidden = self.rec2(attn_output_0, hidden)
                 
             
-            # if self.context_gate is not None:
-            #     if context_img is None:
-            #          decoder_output = self.context_gate(
-            #             decoder_input, rnn_output, decoder_output
-            #         )
-            #     else:
-            #         decoder_output = self.context_gate(
-            #             decoder_input, rnn_output, decoder_output
-            #         )
            
             decoder_output = self.dropout(decoder_output)
             input_feed = decoder_output
