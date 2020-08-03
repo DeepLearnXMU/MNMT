@@ -258,15 +258,12 @@ class RNNDecoderBase(nn.Module):
                                    hidden_size=hidden_size,
                                    num_layers=num_layers,
                                    dropout=dropout)
-        self.Linear_gate_beta=nn.Linear(hidden_size,1)
         # self.Linear_gate_theta=nn.Linear(hidden_size,1)
         self.sigmoid=nn.Sigmoid()
         self.sm = nn.Softmax()
-        self.Linear_visual2text=nn.Linear(hidden_size, 1)
-        self.Linear_text2visual=nn.Linear(hidden_size, 1)
-        self.Linear_bi_dim_attn = nn.Linear(self.hidden_size, 1)
-        self.gate_bi_dim_attn_memory = nn.Linear(hidden_size,1)
-        self.gate_context_img = nn.Linear(hidden_size ,1)
+        # self.Linear_bi_dim_attn = nn.Linear(self.hidden_size, 1)
+        # self.gate_bi_dim_attn_memory = nn.Linear(hidden_size,1)
+        # self.gate_context_img = nn.Linear(hidden_size ,1)
 
         # Set up the context gate.
         self.context_gate = None
@@ -275,14 +272,14 @@ class RNNDecoderBase(nn.Module):
                 context_gate, self._input_size,
                 hidden_size, hidden_size, hidden_size
             )
-        self.context_gate1=onmt.modules.context_gate_factory(
-                'both', self._input_size,
-                hidden_size, hidden_size, hidden_size
-            )
-        self.context_gate2=onmt.modules.context_gate_factory(
-                'both', hidden_size,
-                hidden_size, hidden_size, hidden_size
-            )
+        # self.context_gate1=onmt.modules.context_gate_factory(
+        #         'both', self._input_size,
+        #         hidden_size, hidden_size, hidden_size
+        #     )
+        # self.context_gate2=onmt.modules.context_gate_factory(
+        #         'both', hidden_size,
+        #         hidden_size, hidden_size, hidden_size
+        #     )
         # Set up the standard attention.
         self._coverage = coverage_attn
 
@@ -297,24 +294,28 @@ class RNNDecoderBase(nn.Module):
             attn_type=attn_type,gpu=gpu, multi_query=True
         )
 
+        if self.co_attention == 1:
+            self.Linear_gate_beta=nn.Linear(hidden_size,1)
+            self.attn = onmt.modules.GlobalAttention(
+                hidden_size, coverage=coverage_attn,
+                attn_type=attn_type,gpu=gpu, multi_query=True
+            )
 
-        self.attn = onmt.modules.GlobalAttention(
-            hidden_size, coverage=coverage_attn,
-            attn_type=attn_type,gpu=gpu, multi_query=True
-        )
 
+        if self.bi_attention == 1:
+            self.Linear_visual2text=nn.Linear(hidden_size, 1)
+            self.Linear_text2visual=nn.Linear(hidden_size, 1)
+            #图像文本引导图像
+            self.bi_attn_text_guiding_img =  onmt.modules.GlobalAttention(
+                hidden_size, coverage=coverage_attn,
+                attn_type='dot',gpu=gpu, multi_query=False
+            )
 
-        #图像文本引导图像
-        self.bi_attn_text_guiding_img =  onmt.modules.GlobalAttention(
-            hidden_size, coverage=coverage_attn,
-            attn_type='dot',gpu=gpu, multi_query=False
-        )
-
-        # 图像文本引导文本
-        self.bi_attn_text_guiding_img2 = onmt.modules.GlobalAttention(
-            hidden_size, coverage=coverage_attn,
-            attn_type='dot', gpu=gpu, multi_query=False
-        )
+            # 图像文本引导文本
+            self.bi_attn_text_guiding_img2 = onmt.modules.GlobalAttention(
+                hidden_size, coverage=coverage_attn,
+                attn_type='dot', gpu=gpu, multi_query=False
+            )
 
         
 
@@ -354,16 +355,13 @@ class RNNDecoderBase(nn.Module):
         tgt_len, tgt_batch, _ = tgt.size()
         _, memory_batch, _ = memory_bank.size()
         aeq(tgt_batch, memory_batch)
-        # END
         src_len = memory_bank.size(0)
-
         memory_bank = memory_bank.transpose(0, 1).contiguous()  # [batch, src_len, hidden]
 
         if context_img is not None and self.bi_attention:
-           
-            ###############进行bi-dimension attention############
+            ###############bi-dimension attention############
+            memory_bank = self.dropout_hidden(memory_bank)
             img_feat_num = context_img.size(1)
-            # 文本guiding图片  返回[src_len, batch, dim]
             img_text_alignment= self.bi_attn_text_guiding_img( context_img.contiguous(),memory_bank,memory_lengths)       #[batch, img_feat_num, src_len]  还没有softmax完的
 
             text2visual_alignment = self.sm(img_text_alignment.transpose(1,2).contiguous().view(tgt_batch*src_len, img_feat_num))\
@@ -390,13 +388,10 @@ class RNNDecoderBase(nn.Module):
             context_img = context_img + gate_visual2text * visual2text
 
 
-            memory_bank=self.dropout_hidden(memory_bank)
-            context_img=self.dropout_hidden(context_img)
 
-            
         # Run the forward pass of the RNN.
         decoder_final, decoder_outputs, attns = self._run_forward_pass(
-            tgt, memory_bank, state, memory_lengths=memory_lengths, context_img=context_img)
+            tgt, memory_bank, state, memory_lengths=memory_lengths)
 
         # Update the state with the result.
         final_output = decoder_outputs[-1]
@@ -485,9 +480,9 @@ class StdRNNDecoder(RNNDecoderBase):
         # END
 
         # Calculate the attention.
-        decoder_outputs, p_attn = self.attn(
-            rnn_output.transpose(0, 1).contiguous(),
-            memory_bank.transpose(0, 1),
+        decoder_outputs, p_attn = self.attn_no_guiding(
+            rnn_output.transpose(0,1).contiguous(),
+            memory_bank.contiguous(),
             memory_lengths=memory_lengths
         )
         attns["std"] = p_attn
@@ -578,62 +573,65 @@ class InputFeedRNNDecoder(RNNDecoderBase):
            
             #用decoder的隐层作为guiding
             #decoder_output其实就是context  
-            attn_output_0, p_attn = self.attn_no_guiding(
+            text_context, p_attn = self.attn_no_guiding(
                 rnn_output,
                 memory_bank,
                 memory_lengths=memory_lengths)
+            # text_context = self.dropout_hidden(text_context)
+            # print(p_attn)
+            # raise AssertionError
             
-            attn_output_img=None
+            # attn_output_img=None
             if self.co_attention == 0:
-                attn_output_img, attn_img = self.attn_img(
+                img_context, attn_img = self.attn_img(
                     rnn_output,
                     context_img,
-                    memory_lengths=None  # 不进行mask
+                    memory_lengths=None,  # 不进行mask
                 )
-
-                gate_beta = self.sigmoid(self.Linear_gate_beta(rnn_output))
-                attn_output_img = torch.mul(attn_output_img, gate_beta)
-
-                rec2_input = attn_output_0 + attn_output_img
-                decoder_output, hidden = self.rec2(rec2_input, hidden)
+                if context_img is None:
+                    rec2_input = text_context + img_context
+                    decoder_output, hidden = self.rec2(rec2_input, hidden)
+                else:
+                    decoder_output = text_context
+             
 
                 if self.context_gate is not None:
                     decoder_output = self.context_gate(
                             decoder_input, rnn_output, decoder_output
                         )
             else:
-
                 if context_img is not None:
-
-                    attn_output_img, attn_img = self.attn_img(
-                        self.context_gate1(decoder_input,rnn_output,attn_output_0),
+                    img_context, attn_img = self.attn_img(
+                        rnn_output,
                         context_img,
-                        memory_lengths=None    #不进行mask
-
+                        memory_lengths=None,    #不进行mask
+                        query_modal=text_context
                         )
 
                     gate_beta = self.sigmoid(self.Linear_gate_beta(rnn_output))
-                    attn_output_img=torch.mul(attn_output_img,gate_beta)
+                    attn_output_img=torch.mul(img_context, gate_beta)
 
                     #&&&  这里可以考虑评上一些东西如：目标端的隐层
                     #用visual feature经过attention加权求和后的向量  、  decoder的隐层作为guiding
                     attn_output_1, attn = self.attn(
-                        rnn_output+attn_output_img+attn_output_0,
+                        rnn_output,
                         memory_bank,
                         memory_lengths=memory_lengths,
-                        coverage=coverage)
+                        coverage=coverage,
+                        query_modal=attn_output_img)
 
-
-                if attn_output_img is not None:
                     # #利用context 来更新decoder的隐层
-                    rec2_input=attn_output_0  + attn_output_img + attn_output_1
-                    decoder_output,hidden = self.rec2(rec2_input,hidden)
+                    rec2_input = text_context + attn_output_img + attn_output_1
+                    decoder_output, hidden = self.rec2(rec2_input, hidden)
 
                 else:
-                    decoder_output,hidden = self.rec2(attn_output_0, hidden)
-                
-            
-           
+                    decoder_output, hidden = self.rec2(text_context, hidden)
+
+                if self.context_gate is not None:
+                    decoder_output = self.context_gate(
+                        decoder_input, text_context, decoder_output
+                    )
+
             decoder_output = self.dropout(decoder_output)
             input_feed = decoder_output
 
