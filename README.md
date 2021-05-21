@@ -1,6 +1,8 @@
 # MNMT
 ## Requirements
-
+* Python 3.6.2
+* CUDA 9.0
+* pytorch 1.0.0
 ```bash
 pip install -r requirements.txt
 ```
